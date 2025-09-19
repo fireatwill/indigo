@@ -13,6 +13,8 @@
 #include <pthread.h>
 #include <errno.h>
 
+#include <sys/termios.h>
+
 #include <indigo/indigo_driver_xml.h>
 #include <indigo/indigo_dome_driver.h>
 #include <indigo/indigo_io.h>
@@ -32,6 +34,52 @@ typedef struct {
 #define PROPERTY_LOCK()		pthread_mutex_lock(&PRIVATE_DATA->property_mutex)
 #define PROPERTY_UNLOCK()	pthread_mutex_unlock(&PRIVATE_DATA->property_mutex)
 
+static int dome_read_line(int handle, char *buffer, int length) {
+	char c = '\0';
+	int total_bytes = 0;
+	while (total_bytes < length) {
+		int bytes_read = indigo_read(handle, &c, 1);
+		if (bytes_read > 0) {
+			if (c == '\r')
+				break;
+			else
+				buffer[total_bytes++] = c;
+		} else {
+			return -1;
+		}
+	}
+	buffer[total_bytes] = '\0';
+	return total_bytes;
+}
+
+static bool dome_command(indigo_device *device, char *command, char *response, int max) {
+	tcflush(PRIVATE_DATA->handle, TCIOFLUSH);
+	indigo_write(PRIVATE_DATA->handle, command, strlen(command));
+	indigo_write(PRIVATE_DATA->handle, "\r", 1);
+	if (response != NULL) {
+		if (dome_read_line(PRIVATE_DATA->handle, response, max) == -1) {
+			INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Command %s -> no response", command);
+			return false;
+		}
+	}
+	INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Command %s -> %s", command, response != NULL ? response : "NULL");
+	return true;
+}
+
+static bool dome_handshake(indigo_device *device) {
+	char response[64];
+
+	for(int i = 0; i < 2; i++) { // send twice to sync if necessary
+		if (dome_command(device, "PULSAR", response, sizeof(response))) {
+			if (dome_command(device, "VER", response, sizeof(response))) {
+				return true;
+			}
+			return false;
+		}
+	}
+	return false;
+}
+
 static indigo_result dome_enumerate_properties(indigo_device *device, indigo_client *client, indigo_property *property) {
 	return indigo_dome_enumerate_properties(device, NULL, NULL);
 }
@@ -42,6 +90,10 @@ static indigo_result dome_attach(indigo_device *device) {
 	if (indigo_dome_attach(device, DRIVER_NAME, DRIVER_VERSION) == INDIGO_OK) {
 		pthread_mutex_init(&PRIVATE_DATA->property_mutex, NULL);
 		INDIGO_DEVICE_ATTACH_LOG(DRIVER_NAME, device->name);
+		DOME_SPEED_PROPERTY->hidden = true;
+		DOME_DIRECTION_PROPERTY->hidden = true;
+		DEVICE_PORT_PROPERTY->hidden = false;
+		DEVICE_PORTS_PROPERTY->hidden = false;
 		return dome_enumerate_properties(device, NULL, NULL);
 	}
 	return INDIGO_FAILED;
@@ -59,14 +111,45 @@ static void dome_connection_handler(indigo_device *device) {
 				indigo_update_property(device, CONNECTION_PROPERTY, NULL);
 			} else {
 				PROPERTY_UNLOCK();
+				char *device_name = DEVICE_PORT_ITEM->text.value;
+				PRIVATE_DATA->handle = indigo_open_serial_with_speed(device_name, 115200);
+				if (PRIVATE_DATA->handle < 0) {
+					INDIGO_DRIVER_ERROR(DRIVER_NAME, "Opening device %s: failed", DEVICE_PORT_ITEM->text.value);
+					device->is_connected = false; // think this is redundant
+					CONNECTION_PROPERTY->state = INDIGO_ALERT_STATE;
+					indigo_set_switch(CONNECTION_PROPERTY, CONNECTION_DISCONNECTED_ITEM, true);
+					indigo_update_property(device, CONNECTION_PROPERTY, NULL);
+					indigo_global_unlock(device);
+					return;
+				} else if (!dome_handshake(device)) {
+					int res = close(PRIVATE_DATA->handle);
+					if (res < 0) {
+						INDIGO_DRIVER_ERROR(DRIVER_NAME, "close(%d) = %d", PRIVATE_DATA->handle, res);
+					} else {
+						INDIGO_DRIVER_DEBUG(DRIVER_NAME, "close(%d) = %d", PRIVATE_DATA->handle, res);
+					}
+					device->is_connected = false; // think this is redundant
+					INDIGO_DRIVER_ERROR(DRIVER_NAME, "Connect failed, no response or invalid response");
+					CONNECTION_PROPERTY->state = INDIGO_ALERT_STATE;
+					indigo_set_switch(CONNECTION_PROPERTY, CONNECTION_DISCONNECTED_ITEM, true);
+					indigo_update_property(device, CONNECTION_PROPERTY, NULL); // could display message
+					indigo_global_unlock(device);
+					return;
+				}
 				INDIGO_DRIVER_LOG(DRIVER_NAME, "%s connected.", "Pulsar");
 				CONNECTION_PROPERTY->state = INDIGO_OK_STATE;
 				device->is_connected = true;
+				INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Connected = %d", PRIVATE_DATA->handle);
 			}
 		}
 	} else {
 		if (device->is_connected) {
-			// disconnect
+			int res = close(PRIVATE_DATA->handle);
+			if (res < 0) {
+				INDIGO_DRIVER_ERROR(DRIVER_NAME, "close(%d) = %d", PRIVATE_DATA->handle, res);
+			} else {
+				INDIGO_DRIVER_DEBUG(DRIVER_NAME, "close(%d) = %d", PRIVATE_DATA->handle, res);
+			}
 			indigo_global_unlock(device);
 			device->is_connected = false;
 			INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Disconnected");

@@ -16,6 +16,11 @@ Instead, I used the following to transmit a command:
 
 There's definitely something weird going on with the command processing, and using echo in this way seems to work best.
 
+## Dev fake serial port
+`socat -d -d pty,raw,echo=0 pty,raw,echo=0 &`
+will output two pts devices. Connect the driver to one of these, e.g. `/dev/pts/1`, and then echo responses to the other end.
+E.g. `echo -n -e "Y123\r" >/dev/pts/2`
+
 ## Commands and their output formats:
 
 # PULSAR
