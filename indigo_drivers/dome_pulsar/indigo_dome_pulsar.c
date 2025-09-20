@@ -82,6 +82,17 @@ static bool dome_handshake(indigo_device *device) {
 	return false;
 }
 
+static bool dome_goto_azimuth(indigo_device *device, double target_az) {
+	char command[64];
+	char response[4];
+
+	sprintf(command, "GO %.1f", target_az);
+	if (!dome_command(device, command, response, sizeof(response))) {
+		return false;
+	}
+	return strcmp(response, "A") == 0;
+}
+
 static bool dome_stop(indigo_device *device) {
 	char response[64];
 
@@ -89,6 +100,24 @@ static bool dome_stop(indigo_device *device) {
 		return false;
 	}
 	return strcmp(response, "A") == 0;
+}
+
+static bool dome_get_azimuth(indigo_device *device, double *current_az) {
+	char response[16];
+
+	if (!dome_command(device, "ANGLE", response, sizeof(response))) {
+		return false;
+	}
+	return sscanf(response, "%lf", current_az) == 1;
+}
+
+static bool dome_get_extended_status(indigo_device *device, double *current_az, double *target_az, int *motor_state, int *direction_state, int *shutter_state) {
+	char response[128];
+
+	if (!dome_command(device, "V", response, sizeof(response))) {
+		return false;
+	}
+	return sscanf(response, "%lf %d %*lf %lf %d %d %*d %*d %*d %*d %*d %*d %*d", current_az, motor_state, target_az, direction_state, shutter_state) == 5;
 }
 
 static indigo_result dome_enumerate_properties(indigo_device *device, indigo_client *client, indigo_property *property) {
@@ -124,6 +153,33 @@ static indigo_result dome_attach(indigo_device *device) {
 }
 
 static void dome_timer_callback(indigo_device *device) {
+	double current_az, target_az;
+	int motor_state, direction_state, shutter_state;
+
+	if (!dome_get_extended_status(device, &current_az, &target_az, &motor_state, &direction_state, &shutter_state)) {
+		INDIGO_DRIVER_ERROR(DRIVER_NAME, "dome_get_extended_status(): returned error");
+	} else {
+		if (DOME_HORIZONTAL_COORDINATES_AZ_ITEM->number.value != current_az) {
+			INDIGO_DRIVER_LOG(DRIVER_NAME, "updating position to %f", current_az);
+			DOME_HORIZONTAL_COORDINATES_AZ_ITEM->number.value = current_az;
+			indigo_update_property(device, DOME_HORIZONTAL_COORDINATES_PROPERTY, NULL);
+		}
+
+		if ((direction_state == 0) && (DOME_HORIZONTAL_COORDINATES_PROPERTY->state == INDIGO_BUSY_STATE)) {
+			// has now stopped
+			if (indigo_azimuth_distance(DOME_HORIZONTAL_COORDINATES_AZ_ITEM->number.target, current_az) >= 5.0f) {
+				INDIGO_DRIVER_LOG(DRIVER_NAME, "dome stopped in wrong position, updating position to %f", current_az);
+				DOME_HORIZONTAL_COORDINATES_PROPERTY->state = INDIGO_ALERT_STATE;
+				DOME_HORIZONTAL_COORDINATES_AZ_ITEM->number.value = current_az;
+				indigo_update_property(device, DOME_HORIZONTAL_COORDINATES_PROPERTY, NULL);
+			} else {
+				INDIGO_DRIVER_LOG(DRIVER_NAME, "dome has reached position, updating position to %f", current_az);
+				DOME_HORIZONTAL_COORDINATES_PROPERTY->state = INDIGO_OK_STATE;
+				DOME_HORIZONTAL_COORDINATES_AZ_ITEM->number.value = current_az;
+				indigo_update_property(device, DOME_HORIZONTAL_COORDINATES_PROPERTY, NULL);
+			}
+		}
+	}
 
 	INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Timer tick");
 	indigo_reschedule_timer(device, 5, &PRIVATE_DATA->dome_timer);
@@ -252,6 +308,30 @@ static indigo_result dome_change_property(indigo_device *device, indigo_client *
 		DOME_ABORT_MOTION_PROPERTY->state = INDIGO_OK_STATE;
 		DOME_ABORT_MOTION_ITEM->sw.value = false;
 		indigo_update_property(device, DOME_ABORT_MOTION_PROPERTY, NULL);
+	} else if (indigo_property_match_changeable(DOME_HORIZONTAL_COORDINATES_PROPERTY, property)) {
+		// -------------------------------------------------------------------------------- DOME_HRIZONTAL_COORDINATES
+		indigo_property_copy_values(DOME_HORIZONTAL_COORDINATES_PROPERTY, property, false);
+		if (DOME_PARK_PARKED_ITEM->sw.value) {
+			double current_az;
+			if (!dome_get_azimuth(device, &current_az)) {
+				INDIGO_DRIVER_ERROR(DRIVER_NAME, "dome_get_azimuth(%d): returned error", PRIVATE_DATA->handle);
+			} else {
+				DOME_HORIZONTAL_COORDINATES_AZ_ITEM->number.value = current_az;
+			}
+			DOME_HORIZONTAL_COORDINATES_PROPERTY->state = INDIGO_ALERT_STATE;
+			indigo_update_property(device, DOME_HORIZONTAL_COORDINATES_PROPERTY, "Dome is parked.");
+			return INDIGO_OK;
+		}
+		double target_az = DOME_HORIZONTAL_COORDINATES_AZ_ITEM->number.target;
+		if (!dome_goto_azimuth(device, target_az)) {
+			INDIGO_DRIVER_ERROR(DRIVER_NAME, "dome_goto_azimuth(%d): returned error", PRIVATE_DATA->handle);
+			DOME_HORIZONTAL_COORDINATES_PROPERTY->state = INDIGO_ALERT_STATE;
+			indigo_update_property(device, DOME_HORIZONTAL_COORDINATES_PROPERTY, NULL);
+			return INDIGO_OK;
+		}
+		DOME_HORIZONTAL_COORDINATES_PROPERTY->state = INDIGO_BUSY_STATE;
+		indigo_update_property(device, DOME_HORIZONTAL_COORDINATES_PROPERTY, NULL);
+		return INDIGO_OK;
 	}
 	return indigo_dome_change_property(device, client, property);
 }
