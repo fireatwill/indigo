@@ -29,6 +29,8 @@
 typedef struct {
 	int handle;
 	pthread_mutex_t property_mutex;
+	pthread_mutex_t port_mutex;
+	indigo_timer *dome_timer;
 } pulsar_private_data;
 
 #define PROPERTY_LOCK()		pthread_mutex_lock(&PRIVATE_DATA->property_mutex)
@@ -36,9 +38,9 @@ typedef struct {
 
 static int dome_read_line(int handle, char *buffer, int length) {
 	char c = '\0';
-	int total_bytes = 0;
+	long total_bytes = 0;
 	while (total_bytes < length) {
-		int bytes_read = indigo_read(handle, &c, 1);
+		long bytes_read = indigo_read(handle, &c, 1);
 		if (bytes_read > 0) {
 			if (c == '\r')
 				break;
@@ -49,19 +51,39 @@ static int dome_read_line(int handle, char *buffer, int length) {
 		}
 	}
 	buffer[total_bytes] = '\0';
-	return total_bytes;
+	return (int)total_bytes;
+}
+
+static bool dome_set_serial_options(int handle) {
+	struct termios to;
+
+	if (tcgetattr(handle, &to) == -1) {
+		return false;
+	}
+	//to.c_oflag &= ~(OPOST | ONLCR);
+	to.c_iflag |= ICRNL;
+	if (tcsetattr(handle, TCSANOW, &to) == -1) {
+		return false;
+	}
+	return true;
 }
 
 static bool dome_command(indigo_device *device, char *command, char *response, int max) {
+	char wrapped_cmd[64];
+
+	snprintf(wrapped_cmd, 64, "%s\r", command);
+	pthread_mutex_lock(&PRIVATE_DATA->port_mutex);
 	tcflush(PRIVATE_DATA->handle, TCIOFLUSH);
-	indigo_write(PRIVATE_DATA->handle, command, strlen(command));
-	indigo_write(PRIVATE_DATA->handle, "\r", 1);
+	indigo_write(PRIVATE_DATA->handle, wrapped_cmd, strlen(wrapped_cmd));
 	if (response != NULL) {
-		if (dome_read_line(PRIVATE_DATA->handle, response, max) == -1) {
+		//if (dome_read_line(PRIVATE_DATA->handle, response, max) == -1) {
+		if (indigo_read_line(PRIVATE_DATA->handle, response, max) == -1) {
+			pthread_mutex_unlock(&PRIVATE_DATA->port_mutex);
 			INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Command %s -> no response", command);
 			return false;
 		}
 	}
+	pthread_mutex_unlock(&PRIVATE_DATA->port_mutex);
 	INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Command %s -> %s", command, response != NULL ? response : "NULL");
 	return true;
 }
@@ -89,6 +111,7 @@ static indigo_result dome_attach(indigo_device *device) {
 	assert(PRIVATE_DATA != NULL);
 	if (indigo_dome_attach(device, DRIVER_NAME, DRIVER_VERSION) == INDIGO_OK) {
 		pthread_mutex_init(&PRIVATE_DATA->property_mutex, NULL);
+		pthread_mutex_init(&PRIVATE_DATA->port_mutex, NULL);
 		INDIGO_DEVICE_ATTACH_LOG(DRIVER_NAME, device->name);
 		DOME_SPEED_PROPERTY->hidden = true;
 		DOME_DIRECTION_PROPERTY->hidden = true;
@@ -99,7 +122,13 @@ static indigo_result dome_attach(indigo_device *device) {
 	return INDIGO_FAILED;
 }
 
-static void dome_connection_handler(indigo_device *device) {
+static void dome_timer_callback(indigo_device *device) {
+
+	INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Timer tick");
+	indigo_reschedule_timer(device, 5, &PRIVATE_DATA->dome_timer);
+}
+
+static void dome_connection_callback(indigo_device *device) {
 	if (CONNECTION_CONNECTED_ITEM->sw.value) {
 		if (!device->is_connected) {
 			PROPERTY_LOCK();
@@ -121,6 +150,21 @@ static void dome_connection_handler(indigo_device *device) {
 					indigo_update_property(device, CONNECTION_PROPERTY, NULL);
 					indigo_global_unlock(device);
 					return;
+				} else if (!dome_set_serial_options(PRIVATE_DATA->handle)) {
+					int res = close(PRIVATE_DATA->handle);
+					if (res < 0) {
+						INDIGO_DRIVER_ERROR(DRIVER_NAME, "close(%d) = %d", PRIVATE_DATA->handle, res);
+					} else {
+						INDIGO_DRIVER_DEBUG(DRIVER_NAME, "close(%d) = %d", PRIVATE_DATA->handle, res);
+					}
+					device->is_connected = false; // think this is redundant
+					INDIGO_DRIVER_ERROR(DRIVER_NAME, "Connect failed, could not set serial options");
+					CONNECTION_PROPERTY->state = INDIGO_ALERT_STATE;
+					indigo_set_switch(CONNECTION_PROPERTY, CONNECTION_DISCONNECTED_ITEM, true);
+					indigo_update_property(device, CONNECTION_PROPERTY, NULL); // could display message
+					indigo_global_unlock(device);
+					return;
+
 				} else if (!dome_handshake(device)) {
 					int res = close(PRIVATE_DATA->handle);
 					if (res < 0) {
@@ -140,10 +184,13 @@ static void dome_connection_handler(indigo_device *device) {
 				CONNECTION_PROPERTY->state = INDIGO_OK_STATE;
 				device->is_connected = true;
 				INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Connected = %d", PRIVATE_DATA->handle);
+				indigo_set_timer(device, 0.5, dome_timer_callback, &PRIVATE_DATA->dome_timer);
 			}
 		}
 	} else {
 		if (device->is_connected) {
+			indigo_cancel_timer_sync(device, &PRIVATE_DATA->dome_timer);
+			pthread_mutex_lock(&PRIVATE_DATA->port_mutex);
 			int res = close(PRIVATE_DATA->handle);
 			if (res < 0) {
 				INDIGO_DRIVER_ERROR(DRIVER_NAME, "close(%d) = %d", PRIVATE_DATA->handle, res);
@@ -151,6 +198,7 @@ static void dome_connection_handler(indigo_device *device) {
 				INDIGO_DRIVER_DEBUG(DRIVER_NAME, "close(%d) = %d", PRIVATE_DATA->handle, res);
 			}
 			indigo_global_unlock(device);
+			pthread_mutex_unlock(&PRIVATE_DATA->port_mutex);
 			device->is_connected = false;
 			INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Disconnected");
 			CONNECTION_PROPERTY->state = INDIGO_OK_STATE;
@@ -170,7 +218,7 @@ static indigo_result dome_change_property(indigo_device *device, indigo_client *
 		indigo_property_copy_values(CONNECTION_PROPERTY, property, false);
 		CONNECTION_PROPERTY->state = INDIGO_BUSY_STATE;
 		indigo_update_property(device, CONNECTION_PROPERTY, NULL);
-		indigo_set_timer(device, 0, dome_connection_handler, NULL);
+		indigo_set_timer(device, 0, dome_connection_callback, NULL);
 		return INDIGO_OK;
 	}
 	return indigo_dome_change_property(device, client, property);
@@ -180,10 +228,11 @@ static indigo_result dome_detach(indigo_device *device) {
 	assert(device != NULL);
 	if (IS_CONNECTED) {
 		indigo_set_switch(CONNECTION_PROPERTY, CONNECTION_DISCONNECTED_ITEM, true);
-		dome_connection_handler(device);
+		dome_connection_callback(device);
 	}
 	indigo_global_unlock(device);
 	pthread_mutex_destroy(&PRIVATE_DATA->property_mutex);
+	pthread_mutex_destroy(&PRIVATE_DATA->port_mutex);
 	INDIGO_DEVICE_DETACH_LOG(DRIVER_NAME, device->name);
 	return indigo_dome_detach(device);
 }

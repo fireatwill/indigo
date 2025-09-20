@@ -4,6 +4,8 @@ Baud rate is 115200
 
 I used the following command to snoop on the serial port:
 `socat -x -v /dev/ttyPulsarDome,rawer,b115200,crnl PTY,link=/dev/ttyV1,rawer,crnl`
+(I had some issues with crnl processing, so also used this without it - I'm not sure it made any difference, in rawer mode crnl may be ignored.)
+`socat -x -v /dev/ttyPulsarDome,rawer,b115200 PTY,link=/dev/ttyV1,rawer`
 Once open, change access rights:
 `ls -alr /dev/ttyV1` to get the actual pts, followed by e.g. `chmod 0666 /dev/pts/3`
 
