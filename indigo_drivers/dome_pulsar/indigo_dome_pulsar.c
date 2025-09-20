@@ -160,7 +160,7 @@ static void dome_connection_callback(indigo_device *device) {
 					indigo_global_unlock(device);
 					return;
 				}
-				INDIGO_DRIVER_LOG(DRIVER_NAME, "%s connected.", "Pulsar");
+				INDIGO_DRIVER_LOG(DRIVER_NAME, "%s connected.", DOME_PULSAR_NAME);
 				CONNECTION_PROPERTY->state = INDIGO_OK_STATE;
 				device->is_connected = true;
 				INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Connected = %d", PRIVATE_DATA->handle);

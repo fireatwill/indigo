@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-#define DOME_PULSAR_NAME	"Pulsar"
+#define DOME_PULSAR_NAME	"Pulsar Dome"
 
 /** Create DOME Pulsar device instance
  */
