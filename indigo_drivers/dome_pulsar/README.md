@@ -35,9 +35,19 @@ Y519
 1000[TAB]4165[TAB]0[TAB]17000[TAB]0
 
 # SHUTTER
-1
+`0` open
+`1` closed
+`2` opening
+`3` closing
+`4` error
+`5` unknown
+`6` not fitted
 
-I belive 0 = Open, 1 = Closed, 2 = Opening, 3 = Closing
+# OPEN
+Open shutter
+
+# CLOSE
+Close shutter
 
 # ENCREV
 25053.00
@@ -46,22 +56,39 @@ I belive 0 = Open, 1 = Closed, 2 = Opening, 3 = Closing
 0.0
 
 # HOME
-0.0
+The home command seems to get the home position. Returns an angle, e.g. `0.0`
 
 # HOME ?
+Returns a `1` if the dome is in the home position.
 
-Is dome at home?
+# HOME %3.1f 
+Set the home position to the angle provided.
+
+# GO H
+Go to the home position.
+
+# PARK
+The park command seems to get the park position. Returns an angle, e.g. `0.0`
+
+# PARK ?
+Returns a `1` if the dome is in the park position.
+
+# PARK %3.1f 
+Set the park position to the angle provided.
+
+# GO P
+Go to the park position.
 
 # V
 0.0[TAB]0[TAB]0.000000[TAB]0.0[TAB]0[TAB]1[TAB]1000[TAB]4165[TAB]0[TAB]-71[TAB]17000[TAB]0[TAB]0
 
 13 fields
 1 = Current AZ position
-2 = Motor state
-3 = ?
-4 = ?
-5 = Shutter state
-6 =
+2 = Motor state, but may not match MSTATE, I've seen `1` when moving to target, `8` when calibrating, `9` when moving to home
+3 = 
+4 = Target AZ position
+5 = Movement direction, `1` clockwise, `2` anti-clockwise
+6 = Shutter state
 7 =
 8 =
 9 =
@@ -70,20 +97,22 @@ Is dome at home?
 12 =
 13 =
 
-# PARK
-
 # MSTATE
+Get the motor state.
+`0` idle
+`1` moving to target
+`2` moving to velocity
+`3` moving at sideral
+`4` moving ccw
+`5` moving cw
+`6` calibrating
+`7` homing
 
-Is dome moving?
-Values 0 or 3 mean no, not moving. Not sure about that. Motor state, I believe.
-
-# BBOND 1
-
-Connect to shutter
+# BBOND %d
+Not sure about this one, seems to connect or disconnect shutter by setting a `1` or `0`.
 
 # BBOND
-
-Is connected to shutter?
+Not sure about this one, believe it checks if shutter connected.
 
 # BTFORCE
 
@@ -93,36 +122,10 @@ Is connected to shutter?
 
 Sync
 
-# GO P
-
-Park
-
 # GO %3.1f
 
 Presumably go angle
 
-# OPEN
-
-Open shutter
-
-# CLOSE
-
-Close shutter
-
-# GO H
-
-Go home
-
 # CALIBRATE
 
 # STOP
-
-# HOME %3.1f 
-
-Sets home location
-
-# PARK %3.1f 
-
-Set park location
-
-
