@@ -82,6 +82,15 @@ static bool dome_handshake(indigo_device *device) {
 	return false;
 }
 
+static bool dome_stop(indigo_device *device) {
+	char response[64];
+
+	if (!dome_command(device, "STOP", response, sizeof(response))) {
+		return false;
+	}
+	return strcmp(response, "A") == 0;
+}
+
 static indigo_result dome_enumerate_properties(indigo_device *device, indigo_client *client, indigo_property *property) {
 	return indigo_dome_enumerate_properties(device, NULL, NULL);
 }
@@ -224,6 +233,25 @@ static indigo_result dome_change_property(indigo_device *device, indigo_client *
 		}
 		indigo_update_property(device, DOME_PARK_PROPERTY, NULL);
 		return INDIGO_OK;
+	} else if (indigo_property_match_changeable(DOME_ABORT_MOTION_PROPERTY, property)) {
+		// -------------------------------------------------------------------------------- DOME_ABORT_MOTION
+		indigo_property_copy_values(DOME_ABORT_MOTION_PROPERTY, property, false);
+		if (DOME_ABORT_MOTION_ITEM->sw.value) {
+			if (!dome_stop(device)) {
+				INDIGO_DRIVER_ERROR(DRIVER_NAME, "dome_stop(%d): returned error", PRIVATE_DATA->handle);
+				DOME_ABORT_MOTION_PROPERTY->state = INDIGO_ALERT_STATE;
+				DOME_ABORT_MOTION_ITEM->sw.value = false;
+				indigo_update_property(device, DOME_ABORT_MOTION_PROPERTY, NULL);
+				return INDIGO_OK;
+			}
+			if (DOME_PARK_PROPERTY->state == INDIGO_BUSY_STATE) {
+				DOME_PARK_PROPERTY->state = INDIGO_ALERT_STATE;
+				indigo_update_property(device, DOME_PARK_PROPERTY, NULL);
+			}
+		}
+		DOME_ABORT_MOTION_PROPERTY->state = INDIGO_OK_STATE;
+		DOME_ABORT_MOTION_ITEM->sw.value = false;
+		indigo_update_property(device, DOME_ABORT_MOTION_PROPERTY, NULL);
 	}
 	return indigo_dome_change_property(device, client, property);
 }
