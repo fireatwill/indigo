@@ -212,6 +212,18 @@ static indigo_result dome_change_property(indigo_device *device, indigo_client *
 		indigo_update_property(device, CONNECTION_PROPERTY, NULL);
 		indigo_set_timer(device, 0, dome_connection_callback, NULL);
 		return INDIGO_OK;
+	} else if (indigo_property_match_changeable(DOME_PARK_PROPERTY, property)) {
+		// -------------------------------------------------------------------------------- DOME_PARK
+		indigo_property_copy_values(DOME_PARK_PROPERTY, property, false);
+		if (DOME_PARK_UNPARKED_ITEM->sw.value) {
+			// unpark the dome
+			DOME_PARK_PROPERTY->state = INDIGO_OK_STATE;
+		} else if (DOME_PARK_PARKED_ITEM->sw.value) {
+			// park the dome
+			DOME_PARK_PROPERTY->state = INDIGO_OK_STATE;
+		}
+		indigo_update_property(device, DOME_PARK_PROPERTY, NULL);
+		return INDIGO_OK;
 	}
 	return indigo_dome_change_property(device, client, property);
 }
