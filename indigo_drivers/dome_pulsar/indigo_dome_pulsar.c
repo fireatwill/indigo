@@ -92,11 +92,23 @@ static indigo_result dome_attach(indigo_device *device) {
 	if (indigo_dome_attach(device, DRIVER_NAME, DRIVER_VERSION) == INDIGO_OK) {
 		pthread_mutex_init(&PRIVATE_DATA->property_mutex, NULL);
 		pthread_mutex_init(&PRIVATE_DATA->port_mutex, NULL);
-		INDIGO_DEVICE_ATTACH_LOG(DRIVER_NAME, device->name);
+		// -------------------------------------------------------------------------------- DOME_SPEED
 		DOME_SPEED_PROPERTY->hidden = true;
-		DOME_DIRECTION_PROPERTY->hidden = true;
+		// -------------------------------------------------------------------------------- DOME_STEPS_PROPERTY
+		indigo_copy_value(DOME_STEPS_ITEM->label, "Relative move (°)");
+		// -------------------------------------------------------------------------------- DEVICE_PORT
 		DEVICE_PORT_PROPERTY->hidden = false;
+		// -------------------------------------------------------------------------------- DEVICE_PORTS
 		DEVICE_PORTS_PROPERTY->hidden = false;
+		// -------------------------------------------------------------------------------- DOME_ON_HORIZONTAL_COORDINATES_SET
+		DOME_ON_HORIZONTAL_COORDINATES_SET_PROPERTY->hidden = false;
+		// -------------------------------------------------------------------------------- DOME_HORIZONTAL_COORDINATES
+		DOME_HORIZONTAL_COORDINATES_PROPERTY->perm = INDIGO_RW_PERM;
+		// -------------------------------------------------------------------------------- DOME_SLAVING_PARAMETERS
+		DOME_SLAVING_PARAMETERS_PROPERTY->hidden = false;
+		// --------------------------------------------------------------------------------
+		ADDITIONAL_INSTANCES_PROPERTY->hidden = DEVICE_CONTEXT->base_device != NULL;
+		INDIGO_DEVICE_ATTACH_LOG(DRIVER_NAME, device->name);
 		return dome_enumerate_properties(device, NULL, NULL);
 	}
 	return INDIGO_FAILED;
