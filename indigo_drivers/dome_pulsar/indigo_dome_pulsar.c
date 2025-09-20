@@ -36,32 +36,13 @@ typedef struct {
 #define PROPERTY_LOCK()		pthread_mutex_lock(&PRIVATE_DATA->property_mutex)
 #define PROPERTY_UNLOCK()	pthread_mutex_unlock(&PRIVATE_DATA->property_mutex)
 
-static int dome_read_line(int handle, char *buffer, int length) {
-	char c = '\0';
-	long total_bytes = 0;
-	while (total_bytes < length) {
-		long bytes_read = indigo_read(handle, &c, 1);
-		if (bytes_read > 0) {
-			if (c == '\r')
-				break;
-			else
-				buffer[total_bytes++] = c;
-		} else {
-			return -1;
-		}
-	}
-	buffer[total_bytes] = '\0';
-	return (int)total_bytes;
-}
-
 static bool dome_set_serial_options(int handle) {
 	struct termios to;
 
 	if (tcgetattr(handle, &to) == -1) {
 		return false;
 	}
-	//to.c_oflag &= ~(OPOST | ONLCR);
-	to.c_iflag |= ICRNL;
+	to.c_iflag |= ICRNL; // translate cr to lf on input
 	if (tcsetattr(handle, TCSANOW, &to) == -1) {
 		return false;
 	}
@@ -76,7 +57,6 @@ static bool dome_command(indigo_device *device, char *command, char *response, i
 	tcflush(PRIVATE_DATA->handle, TCIOFLUSH);
 	indigo_write(PRIVATE_DATA->handle, wrapped_cmd, strlen(wrapped_cmd));
 	if (response != NULL) {
-		//if (dome_read_line(PRIVATE_DATA->handle, response, max) == -1) {
 		if (indigo_read_line(PRIVATE_DATA->handle, response, max) == -1) {
 			pthread_mutex_unlock(&PRIVATE_DATA->port_mutex);
 			INDIGO_DRIVER_DEBUG(DRIVER_NAME, "Command %s -> no response", command);
